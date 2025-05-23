@@ -69,16 +69,20 @@ class FaceSkinSmoother:
         # Convert to float for precision
         img_float = image.astype(np.float32) / 255.0
         
-        # Parameters based on level
-        params = {
-            1: {'r': 6, 'eps': 0.01, 'blend': 0.3},
-            2: {'r': 8, 'eps': 0.02, 'blend': 0.4},
-            3: {'r': 10, 'eps': 0.03, 'blend': 0.5},
-            4: {'r': 12, 'eps': 0.04, 'blend': 0.6},
-            5: {'r': 15, 'eps': 0.05, 'blend': 0.7}
+        # Fixed parameters for optimal quality
+        r = 10  # Filter radius (fixed)
+        eps = 0.02  # Regularization parameter (fixed)
+        
+        # Only blend ratio varies by level
+        blend_ratios = {
+            1: 0.12,  # Very subtle
+            2: 0.24,  # Subtle
+            3: 0.36,  # Moderate
+            4: 0.48,  # Strong
+            5: 0.60   # Very strong
         }
         
-        p = params[level]
+        blend = blend_ratios[level]
         
         # Use luminance as guidance image
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
@@ -87,7 +91,7 @@ class FaceSkinSmoother:
         enhanced_channels = []
         for i in range(3):
             channel = img_float[:, :, i]
-            filtered = self.guided_filter(gray, channel, r=p['r'], eps=p['eps'])
+            filtered = self.guided_filter(gray, channel, r=r, eps=eps)
             enhanced_channels.append(filtered)
         
         enhanced_result = np.stack(enhanced_channels, axis=2)
@@ -99,7 +103,7 @@ class FaceSkinSmoother:
         mask_smooth = cv2.GaussianBlur(mask_3d, (15, 15), 0)
         
         # Blend with original
-        result = img_float * (1 - mask_smooth * p['blend']) + enhanced_result * (mask_smooth * p['blend'])
+        result = img_float * (1 - mask_smooth * blend) + enhanced_result * (mask_smooth * blend)
         
         # Convert back to uint8
         result = np.clip(result * 255, 0, 255).astype(np.uint8)
