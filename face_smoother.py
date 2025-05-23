@@ -40,7 +40,7 @@ class FaceSkinSmoother:
         # 左眉毛
         self.left_eyebrow_points = [46, 53, 52, 51, 48, 115, 131, 134, 102, 49, 220, 305]
         # 右眉毛
-        self.right_eyebrow_points = [285, 336, 296, 334, 293, 300, 276, 283, 282, 295, 285, 336]
+        self.right_eyebrow_points = [296, 334, 293, 300, 276, 283, 282, 295, 285, 336]
 
     def guided_filter(self, I, p, r, eps):
         """Guided Filter implementation based on Kaiming He et al. paper"""
@@ -397,11 +397,20 @@ class FaceSkinSmoother:
         
         print(f"  デバッグ画像保存完了")
         
+        # 元画像の顔部分のみ抽出してPNGで保存
+        face_rgba = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+        face_rgba[:, :, 3] = face_mask
+        cv2.imwrite(str(output_dir / f"{base_name}_face_only.png"), face_rgba)
+        
         # 6段階の美肌効果を適用
         for level in range(1, 6):
             smoothed = self.advanced_skin_enhancement(image, skin_mask, level)
             output_path = output_dir / f"{base_name}_smooth_level{level}{input_path.suffix}"
             cv2.imwrite(str(output_path), smoothed)
+            # 美肌画像の顔部分のみ抽出してPNGで保存
+            smoothed_rgba = cv2.cvtColor(smoothed, cv2.COLOR_BGR2BGRA)
+            smoothed_rgba[:, :, 3] = face_mask
+            cv2.imwrite(str(output_dir / f"{base_name}_smooth_level{level}_face_only.png"), smoothed_rgba)
             print(f"  レベル{level}完了")
 
 def main():
