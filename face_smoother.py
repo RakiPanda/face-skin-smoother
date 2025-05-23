@@ -38,7 +38,7 @@ class FaceSkinSmoother:
         
         # 眉毛の輪郭ポイント
         # 左眉毛
-        self.left_eyebrow_points = [46, 53, 52, 51, 48, 115, 131, 134, 102, 49, 220, 305]
+        self.left_eyebrow_points = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
         # 右眉毛
         self.right_eyebrow_points = [296, 334, 293, 300, 276, 283, 282, 295, 285, 336]
 
