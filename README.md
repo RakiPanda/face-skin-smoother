@@ -22,6 +22,12 @@ python -m venv venv
 # Git Bashの場合
 source venv/Scripts/activate
 
+# pipをアップグレード
+python -m pip install --upgrade pip
+
+# setuptoolsをインストール
+pip install setuptools wheel
+
 # パッケージのインストール
 pip install -r requirements.txt
 ```
