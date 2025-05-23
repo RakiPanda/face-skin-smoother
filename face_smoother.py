@@ -31,6 +31,15 @@ def detect_face(image):
     max_face = max(faces, key=lambda x: x[2] * x[3])
     return max_face
 
+def visualize_face_region(image, face_rect):
+    """顔検出領域を可視化"""
+    x, y, w, h = face_rect
+    overlay = image.copy()
+    cv2.rectangle(overlay, (x, y), (x+w, y+h), (0, 255, 0), -1)  # 緑色の矩形
+    alpha = 0.3  # 透明度
+    cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+    return image
+
 def apply_smoothing(image, face_rect, level):
     """バイラテラルフィルターで美肌処理を適用"""
     x, y, w, h = face_rect
@@ -64,6 +73,11 @@ def process_image(input_path, output_dir):
     # 元画像を保存
     base_name = input_path.stem
     cv2.imwrite(str(output_dir / f"{base_name}_original{input_path.suffix}"), image)
+    
+    # 顔検出領域を可視化した画像を保存
+    vis_image = image.copy()
+    vis_image = visualize_face_region(vis_image, face_rect)
+    cv2.imwrite(str(output_dir / f"{base_name}_detected{input_path.suffix}"), vis_image)
     
     # 6段階の美肌効果を適用
     for level in range(1, 6):
