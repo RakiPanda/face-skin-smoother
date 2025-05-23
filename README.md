@@ -28,6 +28,9 @@ python -m pip install --upgrade pip
 # setuptoolsをインストール
 pip install setuptools wheel
 
+
+pip install cmake wheel
+
 # パッケージのインストール
 pip install -r requirements.txt
 ```
