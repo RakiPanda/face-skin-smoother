@@ -2,6 +2,15 @@ import cv2
 import numpy as np
 import os
 from pathlib import Path
+import urllib.request
+
+def download_cascade():
+    """顔検出用のカスケードファイルをダウンロード"""
+    cascade_path = Path("haarcascade_frontalface_default.xml")
+    if not cascade_path.exists():
+        url = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
+        urllib.request.urlretrieve(url, cascade_path)
+    return str(cascade_path)
 
 def create_output_dirs():
     """出力ディレクトリを作成"""
@@ -10,7 +19,8 @@ def create_output_dirs():
 
 def detect_face(image):
     """顔検出を行う"""
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    cascade_path = download_cascade()
+    face_cascade = cv2.CascadeClassifier(cascade_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.3, 5)
     
