@@ -75,11 +75,11 @@ class FaceSkinSmoother:
         
         # Only blend ratio varies by level
         blend_ratios = {
-            1: 0.12,  # Very subtle
-            2: 0.24,  # Subtle
-            3: 0.36,  # Moderate
-            4: 0.48,  # Strong
-            5: 0.60   # Very strong
+            1: 0.05,  # Very subtle
+            2: 0.10,  # Subtle
+            3: 0.15,  # Moderate
+            4: 0.20,  # Strong
+            5: 0.25   # Very strong
         }
         
         blend = blend_ratios[level]
