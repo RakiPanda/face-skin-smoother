@@ -22,6 +22,12 @@ class FaceSkinDetector:
             397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
             172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
         ]
+        
+        # 唇の輪郭ポイント
+        self.lips_points = [
+            61, 146, 91, 181, 84, 17, 314, 405, 320, 307, 375, 321, 308, 324, 318,
+            402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270, 267, 272, 271, 272
+        ]
 
     def detect_skin_hsv(self, image):
         """HSV色空間を使用した肌色検出"""
@@ -61,7 +67,7 @@ class FaceSkinDetector:
         results = self.face_mesh.process(rgb_image)
         
         if not results.multi_face_landmarks:
-            return None, None, None, None, None
+            return None, None, None, None, None, None
         
         h, w = image.shape[:2]
         face_landmarks = results.multi_face_landmarks[0]
@@ -82,8 +88,14 @@ class FaceSkinDetector:
         # 肌色マスクを取得
         skin_mask = self.detect_skin_hsv(image)
         
+        # 唇マスクを作成
+        lips_mask = self.create_lips_mask(image, face_landmarks)
+        
+        # 肌色マスクから唇を除外
+        skin_mask_no_lips = cv2.bitwise_and(skin_mask, cv2.bitwise_not(lips_mask))
+        
         # 顔の輪郭と肌色の両方の条件を満たす領域
-        combined_mask = cv2.bitwise_and(face_mask, skin_mask)
+        combined_mask = cv2.bitwise_and(face_mask, skin_mask_no_lips)
         
         # さらにノイズ除去
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -99,8 +111,35 @@ class FaceSkinDetector:
             # おでこ周辺のポイントを赤色で強調
             if i in [9, 10, 151, 337, 299, 333, 298, 301]:
                 cv2.circle(landmarks_image, (x, y), 3, (0, 0, 255), -1)
+            # 唇のポイントを青色で強調
+            if i in self.lips_points:
+                cv2.circle(landmarks_image, (x, y), 2, (255, 0, 0), -1)
         
-        return combined_mask, face_points, face_mask, skin_mask, landmarks_image
+        return combined_mask, face_points, face_mask, skin_mask, landmarks_image, lips_mask
+
+    def create_lips_mask(self, image, face_landmarks):
+        """唇の領域マスクを作成"""
+        h, w = image.shape[:2]
+        lips_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # 唇の輪郭ポイントを取得
+        lips_points = []
+        for idx in self.lips_points:
+            landmark = face_landmarks.landmark[idx]
+            x = int(landmark.x * w)
+            y = int(landmark.y * h)
+            lips_points.append([x, y])
+        
+        # 唇の輪郭マスクを作成
+        if len(lips_points) > 0:
+            lips_points = np.array(lips_points, dtype=np.int32)
+            cv2.fillPoly(lips_mask, [lips_points], 255)
+            
+            # 唇マスクを少し膨張させて確実に除外
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            lips_mask = cv2.dilate(lips_mask, kernel, iterations=2)
+        
+        return lips_mask
 
 def create_output_dirs():
     """出力ディレクトリを作成"""
@@ -148,7 +187,7 @@ def process_image(input_path, output_dir, detector):
         return
     
     # 肌領域マスクを取得
-    skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image = detector.get_face_mask(image)
+    skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image, lips_mask = detector.get_face_mask(image)
     if skin_mask is None:
         print(f"顔が検出できませんでした: {input_path}")
         return
@@ -170,6 +209,7 @@ def process_image(input_path, output_dir, detector):
     cv2.imwrite(str(output_dir / f"{base_name}_landmarks{input_path.suffix}"), landmarks_image)
     cv2.imwrite(str(output_dir / f"{base_name}_face_mask{input_path.suffix}"), face_mask)
     cv2.imwrite(str(output_dir / f"{base_name}_skin_mask{input_path.suffix}"), skin_mask_debug)
+    cv2.imwrite(str(output_dir / f"{base_name}_lips_mask{input_path.suffix}"), lips_mask)
     cv2.imwrite(str(output_dir / f"{base_name}_final_mask{input_path.suffix}"), skin_mask)
     
     print(f"  デバッグ画像保存完了")
