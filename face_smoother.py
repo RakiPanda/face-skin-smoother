@@ -61,7 +61,7 @@ class FaceSkinDetector:
         results = self.face_mesh.process(rgb_image)
         
         if not results.multi_face_landmarks:
-            return None, None
+            return None, None, None, None, None
         
         h, w = image.shape[:2]
         face_landmarks = results.multi_face_landmarks[0]
@@ -90,7 +90,17 @@ class FaceSkinDetector:
         combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
         combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
         
-        return combined_mask, face_points
+        # デバッグ用に全てのランドマークを描画した画像を作成
+        landmarks_image = image.copy()
+        for i, landmark in enumerate(face_landmarks.landmark):
+            x = int(landmark.x * w)
+            y = int(landmark.y * h)
+            cv2.circle(landmarks_image, (x, y), 1, (0, 255, 0), -1)
+            # おでこ周辺のポイントを赤色で強調
+            if i in [9, 10, 151, 337, 299, 333, 298, 301]:
+                cv2.circle(landmarks_image, (x, y), 3, (0, 0, 255), -1)
+        
+        return combined_mask, face_points, face_mask, skin_mask, landmarks_image
 
 def create_output_dirs():
     """出力ディレクトリを作成"""
@@ -102,6 +112,13 @@ def visualize_skin_region(image, mask):
     overlay = image.copy()
     # マスク領域に緑色を適用
     overlay[mask > 0] = overlay[mask > 0] * 0.7 + np.array([0, 255, 0]) * 0.3
+    return overlay
+
+def visualize_skin_color_mask(image, skin_mask):
+    """肌色マスクのみを可視化"""
+    overlay = image.copy()
+    # 肌色マスク領域に青色を適用
+    overlay[skin_mask > 0] = overlay[skin_mask > 0] * 0.7 + np.array([255, 0, 0]) * 0.3
     return overlay
 
 def apply_skin_smoothing(image, mask, level):
@@ -131,7 +148,7 @@ def process_image(input_path, output_dir, detector):
         return
     
     # 肌領域マスクを取得
-    skin_mask, face_points = detector.get_face_mask(image)
+    skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image = detector.get_face_mask(image)
     if skin_mask is None:
         print(f"顔が検出できませんでした: {input_path}")
         return
@@ -145,8 +162,17 @@ def process_image(input_path, output_dir, detector):
     vis_image = visualize_skin_region(image, skin_mask)
     cv2.imwrite(str(output_dir / f"{base_name}_detected{input_path.suffix}"), vis_image)
     
-    # マスク画像も保存（デバッグ用）
-    cv2.imwrite(str(output_dir / f"{base_name}_mask{input_path.suffix}"), skin_mask)
+    # 肌色マスクのみを可視化した画像を保存
+    skin_color_vis = visualize_skin_color_mask(image, skin_mask_debug)
+    cv2.imwrite(str(output_dir / f"{base_name}_skin_color_detected{input_path.suffix}"), skin_color_vis)
+    
+    # デバッグ用画像を保存
+    cv2.imwrite(str(output_dir / f"{base_name}_landmarks{input_path.suffix}"), landmarks_image)
+    cv2.imwrite(str(output_dir / f"{base_name}_face_mask{input_path.suffix}"), face_mask)
+    cv2.imwrite(str(output_dir / f"{base_name}_skin_mask{input_path.suffix}"), skin_mask_debug)
+    cv2.imwrite(str(output_dir / f"{base_name}_final_mask{input_path.suffix}"), skin_mask)
+    
+    print(f"  デバッグ画像保存完了")
     
     # 6段階の美肌効果を適用
     for level in range(1, 6):
