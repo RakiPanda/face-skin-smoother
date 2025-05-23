@@ -254,23 +254,68 @@ def visualize_skin_color_mask(image, skin_mask):
     return overlay
 
 def apply_skin_smoothing(image, mask, level):
-    """マスクされた肌領域にバイラテラルフィルターを適用"""
+    """マスクされた肌領域に自然な美肌フィルターを適用"""
     if mask is None or np.sum(mask) == 0:
         return image
     
-    # フィルターの強度をレベルに応じて調整
-    d = 9  # フィルターの直径
-    sigma_color = 20 + (level * 10)  # 色空間の標準偏差
-    sigma_space = 20 + (level * 10)  # 座標空間の標準偏差
+    result = image.copy().astype(np.float32)
     
-    # 画像全体にフィルターを適用
-    smoothed = cv2.bilateralFilter(image, d, sigma_color, sigma_space)
+    # レベルに応じた強度設定（大幅に控えめに調整）
+    base_intensity = 0.15 + (level * 0.05)  # 0.2 - 0.4
+    blur_intensity = 3 + level               # 4 - 8（奇数にする）
+    if blur_intensity % 2 == 0:
+        blur_intensity += 1
+    bilateral_d = 5 + level                  # 6 - 10
+    
+    # ステップ1: 軽いノイズ除去
+    denoised = cv2.fastNlMeansDenoisingColored(image, None, 3, 3, 7, 21)
+    
+    # ステップ2: 控えめなバイラテラルフィルター
+    bilateral_sigma = 15 + (level * 5)       # 20 - 40（控えめに）
+    bilateral_filtered = cv2.bilateralFilter(denoised, bilateral_d, bilateral_sigma, bilateral_sigma)
+    
+    # ステップ3: 軽いガウシアンブラー
+    gaussian_blurred = cv2.GaussianBlur(bilateral_filtered, (blur_intensity, blur_intensity), 0)
+    
+    # ステップ4: 適応的ブレンディング（より控えめに）
+    high_freq = cv2.subtract(bilateral_filtered.astype(np.float32), gaussian_blurred.astype(np.float32))
+    high_freq_preserved = gaussian_blurred.astype(np.float32) + high_freq * (0.7 - level * 0.05)
+    
+    # ステップ5: 軽い明度調整のみ
+    brightness_boost = 2 + level * 1         # 3 - 7（控えめに）
+    contrast_factor = 1.0 + level * 0.01     # 1.01 - 1.05（わずかに）
+    
+    adjusted = high_freq_preserved * contrast_factor + brightness_boost
+    adjusted = np.clip(adjusted, 0, 255)
+    
+    # ステップ6: アンシャープマスクは軽レベルのみ適用
+    if level <= 2:  # レベル1-2のみで軽く適用
+        kernel = np.array([[-0.5,-0.5,-0.5], [-0.5,5,-0.5], [-0.5,-0.5,-0.5]])
+        sharpened = cv2.filter2D(adjusted, -1, kernel)
+        unsharp_strength = 0.05 + level * 0.02
+        adjusted = cv2.addWeighted(adjusted, 1-unsharp_strength, sharpened, unsharp_strength, 0)
+    
+    # ステップ7: 軽い色彩調整
+    hsv = cv2.cvtColor(adjusted.astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
+    # 彩度調整を控えめに
+    hsv[:,:,1] = hsv[:,:,1] * (0.98 - level * 0.005)
+    # 明度調整を控えめに
+    hsv[:,:,2] = np.clip(hsv[:,:,2] * (1.01 + level * 0.002), 0, 255)
+    
+    final_result = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    
+    # ステップ8: 元画像とのブレンディング（控えめな比率）
+    blend_ratio = base_intensity
+    blended = cv2.addWeighted(
+        result.astype(np.uint8), 1 - blend_ratio,
+        final_result, blend_ratio, 0
+    )
     
     # マスクを使って肌領域のみ置き換え
-    result = image.copy()
-    result[mask > 0] = smoothed[mask > 0]
+    result_final = image.copy()
+    result_final[mask > 0] = blended[mask > 0]
     
-    return result
+    return result_final
 
 def process_image(input_path, output_dir, detector):
     """画像を処理して6段階の美肌効果を適用"""
