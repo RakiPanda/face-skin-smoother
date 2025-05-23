@@ -1,0 +1,15 @@
+# 仮想環境
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 出力ディレクトリ
+output_images/
+
+# 入力ディレクトリ（オプション）
+input_images/ 
