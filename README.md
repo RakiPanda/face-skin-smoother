@@ -16,7 +16,11 @@
 python -m venv venv
 
 # 仮想環境の有効化
+# PowerShellの場合
 .\venv\Scripts\activate
+
+# Git Bashの場合
+source venv/Scripts/activate
 
 # パッケージのインストール
 pip install -r requirements.txt
