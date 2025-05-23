@@ -94,13 +94,8 @@ class FaceSkinDetector:
         # 肌色マスクから唇を除外
         skin_mask_no_lips = cv2.bitwise_and(skin_mask, cv2.bitwise_not(lips_mask))
         
-        # 顔の輪郭と肌色の両方の条件を満たす領域
-        combined_mask = cv2.bitwise_and(face_mask, skin_mask_no_lips)
-        
-        # さらにノイズ除去
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
-        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
+        # 肌色マスクから唇を除外したものを最終マスクとする
+        combined_mask = skin_mask_no_lips
         
         # デバッグ用に全てのランドマークを描画した画像を作成
         landmarks_image = image.copy()
