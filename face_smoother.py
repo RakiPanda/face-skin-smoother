@@ -28,6 +28,12 @@ class FaceSkinDetector:
             61, 146, 91, 181, 84, 17, 314, 405, 320, 307, 375, 321, 308, 324, 318,
             402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270, 267, 272, 271, 272
         ]
+        
+        # 目の輪郭ポイント
+        # 左目
+        self.left_eye_points = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+        # 右目
+        self.right_eye_points = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
 
     def detect_skin_hsv(self, image):
         """HSV色空間を使用した肌色検出"""
@@ -67,7 +73,7 @@ class FaceSkinDetector:
         results = self.face_mesh.process(rgb_image)
         
         if not results.multi_face_landmarks:
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         
         h, w = image.shape[:2]
         face_landmarks = results.multi_face_landmarks[0]
@@ -91,11 +97,15 @@ class FaceSkinDetector:
         # 唇マスクを作成
         lips_mask = self.create_lips_mask(image, face_landmarks)
         
-        # 肌色マスクから唇を除外
-        skin_mask_no_lips = cv2.bitwise_and(skin_mask, cv2.bitwise_not(lips_mask))
+        # 目マスクを作成
+        eyes_mask = self.create_eyes_mask(image, face_landmarks)
         
-        # 肌色マスクから唇を除外したものを最終マスクとする
-        combined_mask = skin_mask_no_lips
+        # 肌色マスクから唇と目を除外
+        skin_mask_no_lips_and_eyes = cv2.bitwise_and(skin_mask, cv2.bitwise_not(lips_mask))
+        skin_mask_no_lips_and_eyes = cv2.bitwise_and(skin_mask_no_lips_and_eyes, cv2.bitwise_not(eyes_mask))
+        
+        # 肌色マスクから唇と目を除外したものを最終マスクとする
+        combined_mask = skin_mask_no_lips_and_eyes
         
         # デバッグ用に全てのランドマークを描画した画像を作成
         landmarks_image = image.copy()
@@ -109,8 +119,11 @@ class FaceSkinDetector:
             # 唇のポイントを青色で強調
             if i in self.lips_points:
                 cv2.circle(landmarks_image, (x, y), 2, (255, 0, 0), -1)
+            # 目のポイントを黄色で強調
+            if i in self.left_eye_points or i in self.right_eye_points:
+                cv2.circle(landmarks_image, (x, y), 2, (0, 255, 255), -1)
         
-        return combined_mask, face_points, face_mask, skin_mask, landmarks_image, lips_mask
+        return combined_mask, face_points, face_mask, skin_mask, landmarks_image, lips_mask, eyes_mask
 
     def create_lips_mask(self, image, face_landmarks):
         """唇の領域マスクを作成"""
@@ -135,6 +148,42 @@ class FaceSkinDetector:
             lips_mask = cv2.dilate(lips_mask, kernel, iterations=2)
         
         return lips_mask
+
+    def create_eyes_mask(self, image, face_landmarks):
+        """目の領域マスクを作成"""
+        h, w = image.shape[:2]
+        eyes_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # 左目の輪郭ポイントを取得
+        left_eye_points = []
+        for idx in self.left_eye_points:
+            landmark = face_landmarks.landmark[idx]
+            x = int(landmark.x * w)
+            y = int(landmark.y * h)
+            left_eye_points.append([x, y])
+        
+        # 右目の輪郭ポイントを取得
+        right_eye_points = []
+        for idx in self.right_eye_points:
+            landmark = face_landmarks.landmark[idx]
+            x = int(landmark.x * w)
+            y = int(landmark.y * h)
+            right_eye_points.append([x, y])
+        
+        # 目の輪郭マスクを作成
+        if len(left_eye_points) > 0:
+            left_eye_points = np.array(left_eye_points, dtype=np.int32)
+            cv2.fillPoly(eyes_mask, [left_eye_points], 255)
+            
+        if len(right_eye_points) > 0:
+            right_eye_points = np.array(right_eye_points, dtype=np.int32)
+            cv2.fillPoly(eyes_mask, [right_eye_points], 255)
+            
+        # 目マスクを少し膨張させて確実に除外
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        eyes_mask = cv2.dilate(eyes_mask, kernel, iterations=2)
+        
+        return eyes_mask
 
 def create_output_dirs():
     """出力ディレクトリを作成"""
@@ -182,7 +231,7 @@ def process_image(input_path, output_dir, detector):
         return
     
     # 肌領域マスクを取得
-    skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image, lips_mask = detector.get_face_mask(image)
+    skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image, lips_mask, eyes_mask = detector.get_face_mask(image)
     if skin_mask is None:
         print(f"顔が検出できませんでした: {input_path}")
         return
@@ -205,6 +254,7 @@ def process_image(input_path, output_dir, detector):
     cv2.imwrite(str(output_dir / f"{base_name}_face_mask{input_path.suffix}"), face_mask)
     cv2.imwrite(str(output_dir / f"{base_name}_skin_mask{input_path.suffix}"), skin_mask_debug)
     cv2.imwrite(str(output_dir / f"{base_name}_lips_mask{input_path.suffix}"), lips_mask)
+    cv2.imwrite(str(output_dir / f"{base_name}_eyes_mask{input_path.suffix}"), eyes_mask)
     cv2.imwrite(str(output_dir / f"{base_name}_final_mask{input_path.suffix}"), skin_mask)
     
     print(f"  デバッグ画像保存完了")
