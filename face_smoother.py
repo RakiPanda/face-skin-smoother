@@ -3,8 +3,9 @@ import numpy as np
 import os
 from pathlib import Path
 import mediapipe as mp
+import argparse
 
-class FaceSkinDetector:
+class FaceSkinSmoother:
     def __init__(self):
         self.mp_face_mesh = mp.solutions.face_mesh
         self.mp_drawing = mp.solutions.drawing_utils
@@ -37,9 +38,73 @@ class FaceSkinDetector:
         
         # 眉毛の輪郭ポイント
         # 左眉毛
-        self.left_eyebrow_points = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
+        self.left_eyebrow_points = [46, 53, 52, 51, 48, 115, 131, 134, 102, 49, 220, 305]
         # 右眉毛
-        self.right_eyebrow_points = [296, 334, 293, 300, 276, 283, 282, 295, 285, 336]
+        self.right_eyebrow_points = [285, 336, 296, 334, 293, 300, 276, 283, 282, 295, 285, 336]
+
+    def guided_filter(self, I, p, r, eps):
+        """Guided Filter implementation based on Kaiming He et al. paper"""
+        mean_I = cv2.boxFilter(I, cv2.CV_64F, (r, r))
+        mean_p = cv2.boxFilter(p, cv2.CV_64F, (r, r))
+        mean_Ip = cv2.boxFilter(I * p, cv2.CV_64F, (r, r))
+        cov_Ip = mean_Ip - mean_I * mean_p
+        
+        mean_II = cv2.boxFilter(I * I, cv2.CV_64F, (r, r))
+        var_I = mean_II - mean_I * mean_I
+        
+        a = cov_Ip / (var_I + eps)
+        b = mean_p - a * mean_I
+        
+        mean_a = cv2.boxFilter(a, cv2.CV_64F, (r, r))
+        mean_b = cv2.boxFilter(b, cv2.CV_64F, (r, r))
+        
+        q = mean_a * I + mean_b
+        return q
+    
+    def advanced_skin_enhancement(self, image, mask, level):
+        """Guided Filter based skin enhancement"""
+        if image is None or mask is None:
+            return image
+        
+        # Convert to float for precision
+        img_float = image.astype(np.float32) / 255.0
+        
+        # Parameters based on level
+        params = {
+            1: {'r': 6, 'eps': 0.01, 'blend': 0.3},
+            2: {'r': 8, 'eps': 0.02, 'blend': 0.4},
+            3: {'r': 10, 'eps': 0.03, 'blend': 0.5},
+            4: {'r': 12, 'eps': 0.04, 'blend': 0.6},
+            5: {'r': 15, 'eps': 0.05, 'blend': 0.7}
+        }
+        
+        p = params[level]
+        
+        # Use luminance as guidance image
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+        
+        # Apply guided filter to each channel
+        enhanced_channels = []
+        for i in range(3):
+            channel = img_float[:, :, i]
+            filtered = self.guided_filter(gray, channel, r=p['r'], eps=p['eps'])
+            enhanced_channels.append(filtered)
+        
+        enhanced_result = np.stack(enhanced_channels, axis=2)
+        
+        # Create 3D mask for blending
+        mask_3d = np.stack([mask/255.0] * 3, axis=2)
+        
+        # Smooth mask edges for natural transition
+        mask_smooth = cv2.GaussianBlur(mask_3d, (15, 15), 0)
+        
+        # Blend with original
+        result = img_float * (1 - mask_smooth * p['blend']) + enhanced_result * (mask_smooth * p['blend'])
+        
+        # Convert back to uint8
+        result = np.clip(result * 255, 0, 255).astype(np.uint8)
+        
+        return result
 
     def detect_skin_hsv(self, image):
         """HSV色空間を使用した肌色検出"""
@@ -75,6 +140,11 @@ class FaceSkinDetector:
 
     def get_face_mask(self, image):
         """MediaPipeを使用して顔の領域マスクを作成"""
+        # 顔の輪郭ポイント
+        face_oval = [
+            10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
+        ]
+        
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb_image)
         
@@ -86,7 +156,7 @@ class FaceSkinDetector:
         
         # 顔の輪郭ポイントを取得
         face_points = []
-        for idx in self.face_oval:
+        for idx in face_oval:
             landmark = face_landmarks.landmark[idx]
             x = int(landmark.x * w)
             y = int(landmark.y * h)
@@ -234,132 +304,101 @@ class FaceSkinDetector:
         
         return eyebrows_mask
 
-def create_output_dirs():
-    """出力ディレクトリを作成"""
-    output_dir = Path("output_images")
-    output_dir.mkdir(exist_ok=True)
+    def create_landmarks_image(self, image, face_landmarks, base_name, output_dir):
+        """ランドマーク可視化画像を作成"""
+        landmarks_image = image.copy()
+        h, w = image.shape[:2]
+        
+        # 一般的なランドマークを緑色で描画
+        for landmark in face_landmarks.landmark:
+            x = int(landmark.x * w)
+            y = int(landmark.y * h)
+            cv2.circle(landmarks_image, (x, y), 1, (0, 255, 0), -1)
+        
+        # おでこのランドマークを赤色で描画
+        for idx in self.forehead_points:
+            if idx < len(face_landmarks.landmark):
+                landmark = face_landmarks.landmark[idx]
+                x = int(landmark.x * w)
+                y = int(landmark.y * h)
+                cv2.circle(landmarks_image, (x, y), 2, (0, 0, 255), -1)
+        
+        # 唇のランドマークを青色で描画
+        for idx in self.lips_points:
+            if idx < len(face_landmarks.landmark):
+                landmark = face_landmarks.landmark[idx]
+                x = int(landmark.x * w)
+                y = int(landmark.y * h)
+                cv2.circle(landmarks_image, (x, y), 2, (255, 0, 0), -1)
+        
+        # 目のランドマークを黄色で描画
+        for idx in self.left_eye_points + self.right_eye_points:
+            if idx < len(face_landmarks.landmark):
+                landmark = face_landmarks.landmark[idx]
+                x = int(landmark.x * w)
+                y = int(landmark.y * h)
+                cv2.circle(landmarks_image, (x, y), 2, (0, 255, 255), -1)
+        
+        # 眉毛のランドマークを紫色で描画
+        for idx in self.left_eyebrow_points + self.right_eyebrow_points:
+            if idx < len(face_landmarks.landmark):
+                landmark = face_landmarks.landmark[idx]
+                x = int(landmark.x * w)
+                y = int(landmark.y * h)
+                cv2.circle(landmarks_image, (x, y), 2, (255, 0, 255), -1)
+        
+        return landmarks_image
 
-def visualize_skin_region(image, mask):
-    """肌検出領域を可視化"""
-    overlay = image.copy()
-    # マスク領域に緑色を適用
-    overlay[mask > 0] = overlay[mask > 0] * 0.7 + np.array([0, 255, 0]) * 0.3
-    return overlay
+    def visualize_skin_color_mask(self, image, skin_mask, base_name, output_dir):
+        """肌色検出結果を可視化"""
+        overlay = image.copy()
+        # 肌色マスク領域に青色を適用
+        overlay[skin_mask > 0] = overlay[skin_mask > 0] * 0.7 + np.array([255, 0, 0]) * 0.3
+        
+        # 結果を保存
+        output_path = output_dir / f"{base_name}_skin_color_detected.jpg"
+        cv2.imwrite(str(output_path), overlay)
+        
+        return overlay
 
-def visualize_skin_color_mask(image, skin_mask):
-    """肌色マスクのみを可視化"""
-    overlay = image.copy()
-    # 肌色マスク領域に青色を適用
-    overlay[skin_mask > 0] = overlay[skin_mask > 0] * 0.7 + np.array([255, 0, 0]) * 0.3
-    return overlay
-
-def apply_skin_smoothing(image, mask, level):
-    """マスクされた肌領域に自然な美肌フィルターを適用"""
-    if mask is None or np.sum(mask) == 0:
-        return image
-    
-    result = image.copy().astype(np.float32)
-    
-    # レベルに応じた強度設定（大幅に控えめに調整）
-    base_intensity = 0.15 + (level * 0.05)  # 0.2 - 0.4
-    blur_intensity = 3 + level               # 4 - 8（奇数にする）
-    if blur_intensity % 2 == 0:
-        blur_intensity += 1
-    bilateral_d = 5 + level                  # 6 - 10
-    
-    # ステップ1: 軽いノイズ除去
-    denoised = cv2.fastNlMeansDenoisingColored(image, None, 3, 3, 7, 21)
-    
-    # ステップ2: 控えめなバイラテラルフィルター
-    bilateral_sigma = 15 + (level * 5)       # 20 - 40（控えめに）
-    bilateral_filtered = cv2.bilateralFilter(denoised, bilateral_d, bilateral_sigma, bilateral_sigma)
-    
-    # ステップ3: 軽いガウシアンブラー
-    gaussian_blurred = cv2.GaussianBlur(bilateral_filtered, (blur_intensity, blur_intensity), 0)
-    
-    # ステップ4: 適応的ブレンディング（より控えめに）
-    high_freq = cv2.subtract(bilateral_filtered.astype(np.float32), gaussian_blurred.astype(np.float32))
-    high_freq_preserved = gaussian_blurred.astype(np.float32) + high_freq * (0.7 - level * 0.05)
-    
-    # ステップ5: 軽い明度調整のみ
-    brightness_boost = 2 + level * 1         # 3 - 7（控えめに）
-    contrast_factor = 1.0 + level * 0.01     # 1.01 - 1.05（わずかに）
-    
-    adjusted = high_freq_preserved * contrast_factor + brightness_boost
-    adjusted = np.clip(adjusted, 0, 255)
-    
-    # ステップ6: アンシャープマスクは軽レベルのみ適用
-    if level <= 2:  # レベル1-2のみで軽く適用
-        kernel = np.array([[-0.5,-0.5,-0.5], [-0.5,5,-0.5], [-0.5,-0.5,-0.5]])
-        sharpened = cv2.filter2D(adjusted, -1, kernel)
-        unsharp_strength = 0.05 + level * 0.02
-        adjusted = cv2.addWeighted(adjusted, 1-unsharp_strength, sharpened, unsharp_strength, 0)
-    
-    # ステップ7: 軽い色彩調整
-    hsv = cv2.cvtColor(adjusted.astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
-    # 彩度調整を控えめに
-    hsv[:,:,1] = hsv[:,:,1] * (0.98 - level * 0.005)
-    # 明度調整を控えめに
-    hsv[:,:,2] = np.clip(hsv[:,:,2] * (1.01 + level * 0.002), 0, 255)
-    
-    final_result = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-    
-    # ステップ8: 元画像とのブレンディング（控えめな比率）
-    blend_ratio = base_intensity
-    blended = cv2.addWeighted(
-        result.astype(np.uint8), 1 - blend_ratio,
-        final_result, blend_ratio, 0
-    )
-    
-    # マスクを使って肌領域のみ置き換え
-    result_final = image.copy()
-    result_final[mask > 0] = blended[mask > 0]
-    
-    return result_final
-
-def process_image(input_path, output_dir, detector):
-    """画像を処理して6段階の美肌効果を適用"""
-    image = cv2.imread(str(input_path))
-    if image is None:
-        print(f"画像の読み込みに失敗: {input_path}")
-        return
-    
-    # 肌領域マスクを取得
-    skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image, lips_mask, eyes_mask, eyebrows_mask = detector.get_face_mask(image)
-    if skin_mask is None:
-        print(f"顔が検出できませんでした: {input_path}")
-        return
-    
-    base_name = input_path.stem
-    
-    # 元画像を保存
-    cv2.imwrite(str(output_dir / f"{base_name}_original{input_path.suffix}"), image)
-    
-    # 肌検出領域を可視化した画像を保存
-    vis_image = visualize_skin_region(image, skin_mask)
-    cv2.imwrite(str(output_dir / f"{base_name}_detected{input_path.suffix}"), vis_image)
-    
-    # 肌色マスクのみを可視化した画像を保存
-    skin_color_vis = visualize_skin_color_mask(image, skin_mask_debug)
-    cv2.imwrite(str(output_dir / f"{base_name}_skin_color_detected{input_path.suffix}"), skin_color_vis)
-    
-    # デバッグ用画像を保存
-    cv2.imwrite(str(output_dir / f"{base_name}_landmarks{input_path.suffix}"), landmarks_image)
-    cv2.imwrite(str(output_dir / f"{base_name}_face_mask{input_path.suffix}"), face_mask)
-    cv2.imwrite(str(output_dir / f"{base_name}_skin_mask{input_path.suffix}"), skin_mask_debug)
-    cv2.imwrite(str(output_dir / f"{base_name}_lips_mask{input_path.suffix}"), lips_mask)
-    cv2.imwrite(str(output_dir / f"{base_name}_eyes_mask{input_path.suffix}"), eyes_mask)
-    cv2.imwrite(str(output_dir / f"{base_name}_eyebrows_mask{input_path.suffix}"), eyebrows_mask)
-    cv2.imwrite(str(output_dir / f"{base_name}_final_mask{input_path.suffix}"), skin_mask)
-    
-    print(f"  デバッグ画像保存完了")
-    
-    # 6段階の美肌効果を適用
-    for level in range(1, 6):
-        smoothed = apply_skin_smoothing(image, skin_mask, level)
-        output_path = output_dir / f"{base_name}_smooth_level{level}{input_path.suffix}"
-        cv2.imwrite(str(output_path), smoothed)
-        print(f"  レベル{level}完了")
+    def process_image(self, input_path, output_dir):
+        """画像を処理して6段階の美肌効果を適用"""
+        image = cv2.imread(str(input_path))
+        if image is None:
+            print(f"画像の読み込みに失敗: {input_path}")
+            return
+        
+        # 肌領域マスクを取得
+        skin_mask, face_points, face_mask, skin_mask_debug, landmarks_image, lips_mask, eyes_mask, eyebrows_mask = self.get_face_mask(image)
+        if skin_mask is None:
+            print(f"顔が検出できませんでした: {input_path}")
+            return
+        
+        base_name = input_path.stem
+        
+        # 元画像を保存
+        cv2.imwrite(str(output_dir / f"{base_name}_original{input_path.suffix}"), image)
+        
+        # 肌検出領域を可視化した画像を保存
+        vis_image = self.visualize_skin_color_mask(image, skin_mask, base_name, output_dir)
+        
+        # デバッグ用画像を保存
+        cv2.imwrite(str(output_dir / f"{base_name}_landmarks{input_path.suffix}"), landmarks_image)
+        cv2.imwrite(str(output_dir / f"{base_name}_face_mask{input_path.suffix}"), face_mask)
+        cv2.imwrite(str(output_dir / f"{base_name}_skin_mask{input_path.suffix}"), skin_mask_debug)
+        cv2.imwrite(str(output_dir / f"{base_name}_lips_mask{input_path.suffix}"), lips_mask)
+        cv2.imwrite(str(output_dir / f"{base_name}_eyes_mask{input_path.suffix}"), eyes_mask)
+        cv2.imwrite(str(output_dir / f"{base_name}_eyebrows_mask{input_path.suffix}"), eyebrows_mask)
+        cv2.imwrite(str(output_dir / f"{base_name}_final_mask{input_path.suffix}"), skin_mask)
+        
+        print(f"  デバッグ画像保存完了")
+        
+        # 6段階の美肌効果を適用
+        for level in range(1, 6):
+            smoothed = self.advanced_skin_enhancement(image, skin_mask, level)
+            output_path = output_dir / f"{base_name}_smooth_level{level}{input_path.suffix}"
+            cv2.imwrite(str(output_path), smoothed)
+            print(f"  レベル{level}完了")
 
 def main():
     input_dir = Path("input_images")
@@ -367,17 +406,17 @@ def main():
     
     # 入力ディレクトリが存在しない場合は作成
     input_dir.mkdir(exist_ok=True)
-    create_output_dirs()
+    output_dir.mkdir(exist_ok=True)
     
     # 肌検出器を初期化
-    detector = FaceSkinDetector()
+    detector = FaceSkinSmoother()
     
     # 入力画像の処理
     image_extensions = ('.jpg', '.jpeg', '.png')
     for image_path in input_dir.glob('*'):
         if image_path.suffix.lower() in image_extensions:
             print(f"処理中: {image_path}")
-            process_image(image_path, output_dir, detector)
+            detector.process_image(image_path, output_dir)
 
 if __name__ == "__main__":
     main() 
