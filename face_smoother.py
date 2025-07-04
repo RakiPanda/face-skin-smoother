@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import shutil
 from pathlib import Path
 import mediapipe as mp
 import argparse
@@ -39,7 +40,6 @@ class FaceSkinSmoother:
         self.right_eyebrow_points = [296, 334, 293, 300, 276, 283, 282, 295, 285, 336]
 
     def guided_filter(self, I, p, r, eps):
-        """Guided Filter implementation"""
         mean_I = cv2.boxFilter(I, cv2.CV_64F, (r, r))
         mean_p = cv2.boxFilter(p, cv2.CV_64F, (r, r))
         mean_Ip = cv2.boxFilter(I * p, cv2.CV_64F, (r, r))
@@ -58,7 +58,6 @@ class FaceSkinSmoother:
         return q
     
     def advanced_skin_enhancement(self, image, mask, blend: float):
-        """Guided filter based skin enhancement; blend is a float in [0.0,1.0]"""
         if image is None or mask is None:
             return image
         
@@ -108,6 +107,7 @@ class FaceSkinSmoother:
         pts = [[int(lm.landmark[i].x*w), int(lm.landmark[i].y*h)] for i in self.face_oval]
         face_mask = np.zeros((h,w), dtype=np.uint8)
         cv2.fillPoly(face_mask, [np.array(pts, np.int32)], 255)
+
         skin = self.detect_skin_hsv(image)
         lips = self.create_lips_mask(image, lm)
         eyes = self.create_eyes_mask(image, lm)
@@ -115,7 +115,7 @@ class FaceSkinSmoother:
         skin_clean = cv2.bitwise_and(skin, cv2.bitwise_not(lips))
         skin_clean = cv2.bitwise_and(skin_clean, cv2.bitwise_not(eyes))
         skin_clean = cv2.bitwise_and(skin_clean, cv2.bitwise_not(brows))
-        # debug landmarks img
+
         debug = image.copy()
         for i_land in lm.landmark:
             x,y = int(i_land.x*w), int(i_land.y*h)
@@ -169,6 +169,7 @@ class FaceSkinSmoother:
             print(f"顔が検出できませんでした: {input_path}")
             return
         base = input_path.stem
+
         # 保存
         cv2.imwrite(str(output_dir/f"{base}_original{input_path.suffix}"), image)
         cv2.imwrite(str(output_dir/f"{base}_landmarks{input_path.suffix}"), debug_img)
@@ -179,10 +180,12 @@ class FaceSkinSmoother:
         cv2.imwrite(str(output_dir/f"{base}_eyebrows_mask{input_path.suffix}"), brows_m)
         cv2.imwrite(str(output_dir/f"{base}_final_mask{input_path.suffix}"), skin_mask)
         print("  デバッグ画像保存完了")
+
         # 顔だけPNG
         face_rgba = cv2.cvtColor(image,cv2.COLOR_BGR2BGRA)
         face_rgba[:,:,3] = face_mask
         cv2.imwrite(str(output_dir/f"{base}_face_only.png"), face_rgba)
+
         # 0..100 のインデックスで blend
         for i, blend in enumerate(np.linspace(0.0,1.0,101)):
             sm = self.advanced_skin_enhancement(image, skin_mask, blend)
@@ -192,6 +195,17 @@ class FaceSkinSmoother:
             cv2.imwrite(str(output_dir/f"blend_ratio_{i:03d}_face.png"), sm_rgba)
             if i % 10 == 0 or i == 100:
                 print(f"  blend_ratio_{i:03d}.png 完了")
+
+        # blend_ratio_{i:03d}_face.png のみを集めるフォルダを作成
+        smooth_folder = output_dir / f"{base}_smooth_faces"
+        smooth_folder.mkdir(exist_ok=True)
+        for i in range(101):
+            src = output_dir / f"blend_ratio_{i:03d}_face.png"
+            dst = smooth_folder / f"{base}_smooth_{i:03d}_face.png"
+            shutil.copy(str(src), str(dst))
+
+        print(f"  {smooth_folder.name} フォルダに101枚の画像をコピーしました")
+
 
 def main():
     input_dir = Path("input_images")
